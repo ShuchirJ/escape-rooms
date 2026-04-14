@@ -8,17 +8,17 @@ if answer == "shoe":
     answer = input("Correct! What type of room has no doors nor windows? ")
     if answer == "mushroom":
         escaped = True
-        answer = input("Hooray! You escaped this escape room!")
+        print("Hooray! You escaped this escape room!")
     if answer != "mushroom":
         escaped = False
-        answer = input("Sorry, no. You looked around you and you were amazed to see the world of dinosaurs (u died")
+        print("Sorry, no. You looked around you and you were amazed to see the world of dinosaurs (u died")
 if answer != "shoe":
     escaped = False
     answer = input("Nope, you are suroounded by alligators now. You gonna trick them? (Yes/No)")
     if answer == "Yes":
         escaped = True
-        answer = input("Hooray! You escaped this escape room!")
+        print("Hooray! You escaped this escape room!")
     if answer != "Yes":
         escaped = False
-        answer = input("Sry, you died!")
+        print("Sry, you died!")
       

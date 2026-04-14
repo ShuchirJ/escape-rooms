@@ -8,3 +8,4 @@ if first == 1:
     print("you broke out, but you were coaught by gaurds and were transported")
   elif second == "B":
     print("you could not break out, so you kick the door down. it was only secured on one hinge. you find a phone and call 911. you make it out alive and are sent home through attack helicopter. btw you are the president of AMERICA.")
+    escaped = True
