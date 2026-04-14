@@ -1,0 +1,6 @@
+{
+  "name": "SCC Escape Rooms",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+
+  "postStartCommand": "python main.py"
+}
