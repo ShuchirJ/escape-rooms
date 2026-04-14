@@ -1,6 +1,15 @@
 {
   "name": "SCC Escape Rooms",
-  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "image": "python:3.11-slim",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python"
+      ]
+    }
+  },
+
 
   "postAttachCommand": "python main.py"
 }
