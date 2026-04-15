@@ -8,7 +8,7 @@
     body {
       max-width: 640px;
       margin: 60px auto;
-      padding: 0 24px 60px;
+      padding: 0 24px 120px;
       font-family: system-ui, sans-serif;
       color: #1a1a1a;
       background: #fff;
@@ -25,124 +25,205 @@
       line-height: 1.8;
       white-space: pre-wrap;
       word-break: break-word;
+      margin-top: 10px;
+    }
+    #input-container {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: #f8f8f8;
+      padding: 20px 24px;
+      display: flex;
+      border-top: 1px solid #ddd;
+      box-sizing: border-box;
+      align-items: center;
+      z-index: 1000;
+    }
+    #prompt-label {
+      font-family: monospace;
+      font-weight: bold;
+      margin-right: 12px;
+      color: #333;
+    }
+    #user-input {
+      flex-grow: 1;
+      border: 1px solid #ccc;
+      padding: 8px;
+      border-radius: 4px;
+      outline: none;
+      font-family: monospace;
+      font-size: 14px;
     }
   </style>
 </head>
 <body>
 
-  <!--
-    Add or remove room filenames here.
-    Files must live in a "rooms/" folder next to this HTML.
-    Run with: python -m http.server
-  -->
   <script id="room-list" type="application/json">
   ["aarav.py", "alyna.py", "anika.py", "kanish.py", "meghna.py", "wilfred.py"]
   </script>
 
   <h1>Escape Room</h1>
+  <i>The input box is at the bottom!</i>
   <div id="output">Loading...</div>
 
+  <div id="input-container">
+    <span id="prompt-label">></span>
+    <input type="text" id="user-input" autocomplete="off" autofocus>
+  </div>
+
   <script type="py">
-import os, json, js, builtins
+import os, json, js, builtins, asyncio, ast
 from pyodide.http import pyfetch
+from pyodide.ffi import create_proxy
 
 output = js.document.getElementById("output")
-output.textContent = ""
+user_input = js.document.getElementById("user-input")
+prompt_label = js.document.getElementById("prompt-label")
+
+input_event = asyncio.Event()
+current_input_value = ""
 
 def _print(*args, end="\n", sep=" ", **kw):
-    output.textContent += sep.join(str(a) for a in args) + end
+    text = sep.join(str(a) for a in args) + end
+    output.textContent += text
     js.window.scrollTo(0, js.document.body.scrollHeight)
 
-def _input(prompt=""):
-    result = js.window.prompt(str(prompt) if prompt else " ")
-    if result is None:
-        result = ""
-    _print((str(prompt) if prompt else "") + result)
-    return result
+async def custom_input(prompt=""):
+    global current_input_value
+    prompt_label.textContent = str(prompt) if prompt else "> "
+    user_input.value = ""
+    user_input.focus()
+    
+    await input_event.wait()
+    input_event.clear()
+    
+    _print(f"{prompt_label.textContent}{current_input_value}")
+    prompt_label.textContent = "> "
+    return current_input_value
+
+def handle_keypress(event):
+    global current_input_value
+    if event.key == "Enter":
+        current_input_value = user_input.value
+        input_event.set()
+
+keypress_proxy = create_proxy(handle_keypress)
+user_input.addEventListener("keydown", keypress_proxy)
 
 builtins.print = _print
-builtins.input  = _input
+builtins.input = custom_input
 
-# Fetch room files from the rooms/ folder and write to virtual filesystem
-os.makedirs("rooms", exist_ok=True)
-room_list = json.loads(js.document.getElementById("room-list").textContent)
+# --- THE FIX: Pure Python AST Code Runner ---
+def run_room_async(code_str, namespace):
+    # 1. Parse original room code natively
+    room_tree = ast.parse(code_str)
 
-failed = []
-for filename in room_list:
+    # 2. Safely transform standard input() into await input()
+    class AwaitInputTransformer(ast.NodeTransformer):
+        def visit_Call(self, node):
+            self.generic_visit(node)
+            if isinstance(node.func, ast.Name) and node.func.id == 'input':
+                return ast.Await(value=node)
+            return node
+            
+    room_tree = AwaitInputTransformer().visit(room_tree)
+
+    # 3. Inject 'global escaped' so the main loop can read the variable
+    global_decl = ast.parse("global escaped").body[0]
+    room_tree.body.insert(0, global_decl)
+
+    # 4. Wrap it in an async function structure
+    wrapper_tree = ast.parse("async def _runner():\n    pass")
+    wrapper_tree.body[0].body = room_tree.body # Replace 'pass' with the room logic
+
+    # 5. Compile and execute
+    ast.fix_missing_locations(wrapper_tree)
+    compiled = compile(wrapper_tree, filename="<room>", mode="exec")
+    
+    # Executing defines '_runner' inside our namespace
+    exec(compiled, namespace)
+    
+    # Return the coroutine
+    return namespace['_runner']()
+# ---------------------------------------------
+
+async def main():
+    output.textContent = ""
+    os.makedirs("rooms", exist_ok=True)
+    
     try:
-        resp    = await pyfetch(f"rooms/{filename}")
-        content = await resp.string()
-        with open(f"rooms/{filename}", "w") as f:
-            f.write(content)
-    except Exception as e:
-        failed.append(filename)
+        room_list_json = js.document.getElementById("room-list").textContent
+        room_names = json.loads(room_list_json)
+    except:
+        print("Error: Could not parse room list.")
+        return
 
-if failed:
-    print(f"Warning: could not load {', '.join(failed)}")
-    print("Make sure you are running a local server (python -m http.server).")
-    print()
+    # Fetch files
+    for filename in room_names:
+        try:
+            resp = await pyfetch(f"rooms/{filename}")
+            if resp.status == 200:
+                content = await resp.string()
+                with open(f"rooms/{filename}", "w") as f:
+                    f.write(content)
+        except:
+            pass
 
-room_files = [f"rooms/{name}" for name in room_list if name not in failed]
+    room_files = [f for f in os.listdir("rooms") if f.endswith(".py")]
+    if not room_files:
+        print("No rooms found in the /rooms folder. Check your python -m http.server")
+        return
 
-if not room_files:
-    print("No rooms loaded. Exiting.")
-else:
-    print("[1] Attempt to Escape")
+    print("Choose an option: ")
+    print("[1] Attempt to Escape From All")
     print("[2] Try a Specific Room")
-    option = _input("Enter an option (1 or 2): ").strip()
-
-    if option == "2":
-        possible_rooms = [os.path.basename(f) for f in room_files]
-        print(f"Available rooms: {', '.join(possible_rooms)}")
-        chosen_room = _input("Enter room name (e.g. 'room1.py'): ").strip()
-        if chosen_room in possible_rooms:
-            room_files = [f"rooms/{chosen_room}"]
+    
+    choice = (await custom_input("Select (1/2): ")).strip()
+    
+    active_rooms = room_files
+    if choice == "2":
+        print("Enter a room name to try.")
+        print(f"Available: {', '.join(room_files)}")
+        target = (await custom_input("Enter filename: ")).strip()
+        if target in room_files:
+            active_rooms = [target]
         else:
-            print(f"Room '{chosen_room}' not found. Exiting.")
-            room_files = []
+            print("Invalid room. Restarting...")
+            return
 
-    if room_files:
-        print(f"\n  You have {len(room_files)} room(s) to tackle.")
-        print("  Have fun!")
-        print("_" * 50)
+    for i, filename in enumerate(active_rooms):
+        print(f"\n--- [Room {i+1}: {filename}] ---")
+        
+        with open(f"rooms/{filename}", "r") as f:
+            code = f.read()
 
-        for i, room_file in enumerate(room_files):
-            room_name = os.path.basename(room_file)
+        namespace = {
+            "escaped": False,
+            "print": _print,
+            "input": custom_input,
+            "__name__": "__main__"
+        }
 
-            print(f"\n[Room {i + 1} of {len(room_files)}]\n")
-
-            namespace = {"escaped": False}
-
-            try:
-                with open(room_file, "r") as f:
-                    code = f.read()
-                exec(code, namespace)
-
-            except SystemExit:
-                print()
-
-            except Exception as e:
-                print()
-                print(f"[ERROR in {room_name}: {e}]")
-                print("This room has a bug — skipping it.")
-                continue
-
-            escaped = namespace.get("escaped", False)
-
-            if not escaped:
-                print()
-                print("=" * 50)
-                print("           GAME OVER")
-                print("=" * 50)
-                print(f"  You made it through {i} of {len(room_files)} room(s) :(")
-                print("=" * 50)
-                break
-
-        else:
+        try:
+            # Execute the AST-generated coroutine
+            coro = run_room_async(code, namespace)
+            await coro
+        except SystemExit:
             print()
-            print("_" * 50)
-            print("        YOU ESCAPED!!")
-  </script>
+        except Exception as e:
+            print(f"\n[ERROR in {filename}]: {e}")
+            continue
 
+        if not namespace.get("escaped"):
+            print("\n==================================================")
+            print("                   GAME OVER")
+            print("==================================================")
+            break
+    else:
+        print("\n" + "_"*50 + "\n          YOU ESCAPED ALL ROOMS!!")
+
+asyncio.ensure_future(main())
+  </script>
 </body>
 </html>
