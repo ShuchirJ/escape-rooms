@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Escape Room</title>
+  <script type="module" src="https://pyscript.net/releases/2024.11.1/core.js"></script>
+  <style>
+    body {
+      max-width: 640px;
+      margin: 60px auto;
+      padding: 0 24px 60px;
+      font-family: system-ui, sans-serif;
+      color: #1a1a1a;
+      background: #fff;
+    }
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 24px;
+      letter-spacing: 0.02em;
+    }
+    #output {
+      font-family: monospace;
+      font-size: 14px;
+      line-height: 1.8;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+
+  <!--
+    Add or remove room filenames here.
+    Files must live in a "rooms/" folder next to this HTML.
+    Run with: python -m http.server
+  -->
+  <script id="room-list" type="application/json">
+  ["aarav.py", "alyna.py", "anika.py", "kanish.py", "meghna.py", "wilfred.py"]
+  </script>
+
+  <h1>Escape Room</h1>
+  <div id="output">Loading...</div>
+
+  <script type="py">
+import os, json, js, builtins
+from pyodide.http import pyfetch
+
+output = js.document.getElementById("output")
+output.textContent = ""
+
+def _print(*args, end="\n", sep=" ", **kw):
+    output.textContent += sep.join(str(a) for a in args) + end
+    js.window.scrollTo(0, js.document.body.scrollHeight)
+
+def _input(prompt=""):
+    result = js.window.prompt(str(prompt) if prompt else " ")
+    if result is None:
+        result = ""
+    _print((str(prompt) if prompt else "") + result)
+    return result
+
+builtins.print = _print
+builtins.input  = _input
+
+# Fetch room files from the rooms/ folder and write to virtual filesystem
+os.makedirs("rooms", exist_ok=True)
+room_list = json.loads(js.document.getElementById("room-list").textContent)
+
+failed = []
+for filename in room_list:
+    try:
+        resp    = await pyfetch(f"rooms/{filename}")
+        content = await resp.string()
+        with open(f"rooms/{filename}", "w") as f:
+            f.write(content)
+    except Exception as e:
+        failed.append(filename)
+
+if failed:
+    print(f"Warning: could not load {', '.join(failed)}")
+    print("Make sure you are running a local server (python -m http.server).")
+    print()
+
+room_files = [f"rooms/{name}" for name in room_list if name not in failed]
+
+if not room_files:
+    print("No rooms loaded. Exiting.")
+else:
+    print("[1] Attempt to Escape")
+    print("[2] Try a Specific Room")
+    option = _input("Enter an option (1 or 2): ").strip()
+
+    if option == "2":
+        possible_rooms = [os.path.basename(f) for f in room_files]
+        print(f"Available rooms: {', '.join(possible_rooms)}")
+        chosen_room = _input("Enter room name (e.g. 'room1.py'): ").strip()
+        if chosen_room in possible_rooms:
+            room_files = [f"rooms/{chosen_room}"]
+        else:
+            print(f"Room '{chosen_room}' not found. Exiting.")
+            room_files = []
+
+    if room_files:
+        print(f"\n  You have {len(room_files)} room(s) to tackle.")
+        print("  Have fun!")
+        print("_" * 50)
+
+        for i, room_file in enumerate(room_files):
+            room_name = os.path.basename(room_file)
+
+            print(f"\n[Room {i + 1} of {len(room_files)}]\n")
+
+            namespace = {"escaped": False}
+
+            try:
+                with open(room_file, "r") as f:
+                    code = f.read()
+                exec(code, namespace)
+
+            except SystemExit:
+                print()
+
+            except Exception as e:
+                print()
+                print(f"[ERROR in {room_name}: {e}]")
+                print("This room has a bug — skipping it.")
+                continue
+
+            escaped = namespace.get("escaped", False)
+
+            if not escaped:
+                print()
+                print("=" * 50)
+                print("           GAME OVER")
+                print("=" * 50)
+                print(f"  You made it through {i} of {len(room_files)} room(s) :(")
+                print("=" * 50)
+                break
+
+        else:
+            print()
+            print("_" * 50)
+            print("        YOU ESCAPED!!")
+  </script>
+
+</body>
+</html>
